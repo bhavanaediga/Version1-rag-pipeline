@@ -186,16 +186,35 @@ def generate_node(state: RAGState) -> dict:
         text_parts.append(f"{label}\n{doc.page_content}")
     text_context = "\n\n---\n\n".join(text_parts)
 
-    # Build image content: top-2 blueprint pages, each split into 3×3 = 9 tiles.
-    # 2 pages × 9 tiles = 18 images — balances accuracy vs token cost.
+    # If the query targets a specific page (pinned), send ONLY that page's 9 tiles.
+    # Otherwise send the top-2 retrieved pages (2 × 9 = 18 images).
+    is_page_specific = any(d.metadata.get("pinned") for d in blueprint_docs)
+    pages_to_render = blueprint_docs[:1] if is_page_specific else blueprint_docs[:2]
+
     image_parts = []
-    for doc in blueprint_docs[:2]:
+    for doc in pages_to_render:
         page_num = doc.metadata.get("page_number", "?")
         image_path = doc.metadata.get("image_path", "")
         if not image_path:
             text_parts.append(f"[Blueprint page {page_num}]\n[Image not available]")
             continue
         image_parts.extend(_page_quadrants(image_path, page_num))
+
+    # Extra instruction injected only for page-specific queries
+    page_specific_rule = ""
+    if is_page_specific:
+        pinned_page = next(
+            (d.metadata.get("page_number", "?") for d in blueprint_docs if d.metadata.get("pinned")),
+            "?"
+        )
+        page_specific_rule = (
+            f"\n\nPAGE-SPECIFIC QUERY — the user is asking about page {pinned_page}. "
+            "You MUST go through ALL 9 tiles in order: top-left → top-center → top-right → "
+            "middle-left → middle-center → middle-right → bottom-left → bottom-center → bottom-right. "
+            "Each tile gets its own section. Never combine or skip tiles. "
+            "Even if a tile looks sparse, report every element visible in it — "
+            "every number, letter, line, hatch, symbol, and annotation."
+        )
 
     system_prompt = (
         "You are a construction document assistant specializing in exhaustive blueprint analysis. "
@@ -216,8 +235,9 @@ def generate_node(state: RAGState) -> dict:
         "\n"
         "Never summarize or skip details because the question was short. "
         "A question like 'explain page 4' or 'what is on page 4' demands the same exhaustive "
-        "tile-by-tile response as an explicit detailed request.\n"
-        "\n"
+        "tile-by-tile response as an explicit detailed request."
+        + page_specific_rule +
+        "\n\n"
         "FORMAT YOUR ENTIRE ANSWER AS STRUCTURED MARKDOWN using this pattern for each diagram:\n"
         "\n"
         "## [Diagram Name / Drawing Title] — [Tile Location]\n"
