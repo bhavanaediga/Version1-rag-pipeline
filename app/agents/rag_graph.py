@@ -48,6 +48,22 @@ class RAGState(TypedDict):
 # ── nodes ─────────────────────────────────────────────────────────────────────
 
 def router_node(state: RAGState) -> dict:
+    # If any queried document was ingested as "both", always run both retrievers
+    if state["document_ids"]:
+        from app.database import SessionLocal, Document as DBDocument
+        import uuid as _uuid
+        db = SessionLocal()
+        try:
+            doc_uuids = [_uuid.UUID(did) for did in state["document_ids"]]
+            file_types = {
+                d.file_type
+                for d in db.query(DBDocument).filter(DBDocument.id.in_(doc_uuids)).all()
+            }
+        finally:
+            db.close()
+        if "both" in file_types:
+            return {"query_type": "cross_document"}
+
     prompt = (
         "You are routing a construction document query to the correct retrieval system.\n\n"
         "Rules:\n"

@@ -43,8 +43,8 @@ async def upload_document(
     file_type: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    if file_type not in {"blueprint", "spec"}:
-        raise HTTPException(status_code=400, detail="file_type must be 'blueprint' or 'spec'")
+    if file_type not in {"blueprint", "spec", "both"}:
+        raise HTTPException(status_code=400, detail="file_type must be 'blueprint', 'spec', or 'both'")
 
     doc_id = str(uuid.uuid4())
     safe_name = f"{doc_id}_{file.filename}"
@@ -64,11 +64,14 @@ async def upload_document(
     db.add(doc)
     db.commit()
 
-    db_for_bg = next(get_db())
     if file_type == "blueprint":
-        background_tasks.add_task(ingest_blueprint, doc_id, file_path, db_for_bg)
+        background_tasks.add_task(ingest_blueprint, doc_id, file_path, next(get_db()))
+    elif file_type == "spec":
+        background_tasks.add_task(ingest_text_document, doc_id, file_path, next(get_db()))
     else:
-        background_tasks.add_task(ingest_text_document, doc_id, file_path, db_for_bg)
+        # "both" — run visual + text pipelines concurrently on the same document
+        background_tasks.add_task(ingest_blueprint, doc_id, file_path, next(get_db()))
+        background_tasks.add_task(ingest_text_document, doc_id, file_path, next(get_db()))
 
     return {"document_id": doc_id, "status": "processing"}
 

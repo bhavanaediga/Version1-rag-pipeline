@@ -119,9 +119,10 @@ async def _handle_upload(message: cl.Message, files: list):
     for f in files:
         res = await cl.AskUserMessage(
             content=(
-                f"Got **{f.name}**. "
-                "Is this a **blueprint** (visual drawing/floor plan) or a **spec** (text document)? "
-                "Reply with `blueprint` or `spec`."
+                f"Got **{f.name}**. How should I process it?\n\n"
+                "- `blueprint` — visual drawings only (ColQwen2 image embeddings)\n"
+                "- `spec` — text document only (BGE-M3 hybrid embeddings)\n"
+                "- `both` — run **both** pipelines for full visual + text extraction *(recommended for construction PDFs)*"
             ),
             timeout=60,
         ).send()
@@ -131,8 +132,8 @@ async def _handle_upload(message: cl.Message, files: list):
             continue
 
         file_type = res["output"].strip().lower()
-        if file_type not in {"blueprint", "spec"}:
-            await cl.Message(content="Please reply with exactly `blueprint` or `spec`.").send()
+        if file_type not in {"blueprint", "spec", "both"}:
+            await cl.Message(content="Please reply with `blueprint`, `spec`, or `both`.").send()
             continue
 
         await cl.Message(
