@@ -46,8 +46,9 @@ async def ingest_text_document(document_id: str, file_path: str, db) -> None:
         update_progress(document_id, "Parsing PDF with Docling", db)
         t0 = time.perf_counter()
 
-        from docling.document_converter import DocumentConverter  # type: ignore
+        from docling.document_converter import DocumentConverter, PdfFormatOption  # type: ignore
         from docling.datamodel.pipeline_options import PdfPipelineOptions  # type: ignore
+        from docling.datamodel.base_models import InputFormat  # type: ignore
         from langchain.text_splitter import RecursiveCharacterTextSplitter
 
         opts = PdfPipelineOptions()
@@ -55,7 +56,9 @@ async def ingest_text_document(document_id: str, file_path: str, db) -> None:
         opts.do_table_structure = True
         opts.table_structure_options.do_cell_matching = False
 
-        converter = DocumentConverter(pipeline_options=opts)
+        converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        )
         result = converter.convert(file_path)
         markdown_text = result.document.export_to_markdown()
         t_docling = time.perf_counter() - t0
