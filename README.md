@@ -1,4 +1,4 @@
-# PlanSmartAI — Construction Document RAG Pipeline
+Construction Document RAG Pipeline
 
 A multimodal Retrieval-Augmented Generation (RAG) system purpose-built for construction documents. Upload engineering blueprints or specification PDFs, ask questions in plain English, and get precise cited answers with confidence scores — including exact dimension callouts, table values, annotations, and diagram descriptions extracted at high resolution.
 
