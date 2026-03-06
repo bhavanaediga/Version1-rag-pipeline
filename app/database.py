@@ -46,7 +46,7 @@ class BlueprintPage(Base):
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
     page_number = Column(Integer, nullable=False)
     image_path = Column(String, nullable=False)
-    numarkdown_text = Column(Text, nullable=True)
+    extracted_text = Column(Text, nullable=True)
     qdrant_point_id = Column(String, nullable=True)
 
 

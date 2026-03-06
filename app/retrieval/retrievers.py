@@ -52,7 +52,7 @@ class BlueprintRetriever(BaseRetriever):
                     if page:
                         return [
                             LCDocument(
-                                page_content=page.numarkdown_text or "",
+                                page_content=page.extracted_text or "",
                                 metadata={
                                     "document_id": str(page.document_id),
                                     "page_number": page.page_number,
@@ -96,7 +96,7 @@ class BlueprintRetriever(BaseRetriever):
                         .filter(BlueprintPage.qdrant_point_id == str(hit.id))
                         .first()
                     )
-                    text = page.numarkdown_text if page and page.numarkdown_text else ""
+                    text = page.extracted_text if page and page.extracted_text else ""
                     docs.append(
                         LCDocument(
                             page_content=text,

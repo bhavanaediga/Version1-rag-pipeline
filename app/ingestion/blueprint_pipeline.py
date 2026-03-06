@@ -156,7 +156,7 @@ async def ingest_blueprint(document_id: str, file_path: str, db) -> None:
                     document_id=document_id,
                     page_number=n,
                     image_path=image_map[n],
-                    numarkdown_text=text_map[n],
+                    extracted_text=text_map[n],
                     qdrant_point_id=point_id,
                 )
             )
