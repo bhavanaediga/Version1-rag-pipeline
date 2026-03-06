@@ -93,7 +93,11 @@ def get_document_status(document_id: str, db: Session = Depends(get_db)):
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    return {"document_id": document_id, "status": doc.processing_status}
+    return {
+        "document_id": document_id,
+        "status": doc.processing_status,
+        "progress_detail": doc.progress_detail or "",
+    }
 
 
 class QueryRequest(BaseModel):

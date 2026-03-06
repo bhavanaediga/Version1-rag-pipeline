@@ -74,14 +74,22 @@ async def _handle_upload(message: cl.Message, files: list):
 
 async def _poll_status(document_id: str):
     max_attempts = 120  # up to 10 minutes
+    last_detail = ""
     for _ in range(max_attempts):
         await asyncio.sleep(5)
         async with httpx.AsyncClient(timeout=10) as client:
             try:
                 res = await client.get(f"{API_BASE}/documents/{document_id}/status")
-                status = res.json().get("status", "")
+                data = res.json()
+                status = data.get("status", "")
+                detail = data.get("progress_detail", "")
             except Exception:
                 status = "unknown"
+                detail = ""
+
+        if detail and detail != last_detail:
+            await cl.Message(content=f"⏳ {detail}").send()
+            last_detail = detail
 
         if status == "done":
             await cl.Message(content="Document ready! Ask me anything about it.").send()

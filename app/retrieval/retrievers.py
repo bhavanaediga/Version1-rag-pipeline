@@ -1,8 +1,18 @@
+import re
+import uuid as _uuid
 from typing import List
 
 from langchain_core.documents import Document as LCDocument
 from langchain_core.retrievers import BaseRetriever
-from qdrant_client.models import Filter, FieldCondition, MatchAny, SparseVector, FusionQuery, Prefetch
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    FusionQuery,
+    MatchAny,
+    Prefetch,
+    SparseVector,
+    Fusion,
+)
 
 from app.database import SessionLocal, BlueprintPage
 from app.ingestion.colqwen2_embedder import embedder as colqwen2_embedder
@@ -10,47 +20,83 @@ from app.ingestion.bge_embedder import bge_embedder
 from app.qdrant_setup import get_client
 
 
+def _extract_page_number(query: str) -> int | None:
+    """Return the first explicit page number mentioned in query, or None."""
+    m = re.search(r"\bpage\s*(\d+)\b", query, re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
 class BlueprintRetriever(BaseRetriever):
     document_ids: list = []
-    top_k: int = 50
+    top_k: int = 20  # ColQwen2 MaxSim ranking is high quality; 20 is enough
 
     class Config:
         arbitrary_types_allowed = True
 
     def _get_relevant_documents(self, query: str) -> List[LCDocument]:
         try:
-            query_vecs = colqwen2_embedder.embed_query(query)
-            qdrant = get_client()
-
-            search_filter = None
-            if self.document_ids:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchAny(any=self.document_ids),
-                        )
-                    ]
-                )
-
-            results = qdrant.search(
-                collection_name="blueprint_visual",
-                query_vector=("colqwen2", query_vecs[0] if query_vecs else []),
-                query_filter=search_filter,
-                limit=self.top_k,
-            )
-
             db = SessionLocal()
-            docs = []
             try:
-                for hit in results:
-                    point_id = hit.id
+                # ── OPT-9: page-number injection — skip Qdrant entirely ──────
+                page_num = _extract_page_number(query)
+                if page_num is not None and self.document_ids:
+                    doc_uuids = [_uuid.UUID(did) for did in self.document_ids]
                     page = (
                         db.query(BlueprintPage)
-                        .filter(BlueprintPage.qdrant_point_id == str(point_id))
+                        .filter(
+                            BlueprintPage.page_number == page_num,
+                            BlueprintPage.document_id.in_(doc_uuids),
+                        )
                         .first()
                     )
-                    text = page.numarkdown_text if page and page.numarkdown_text else "No text extracted"
+                    if page:
+                        return [
+                            LCDocument(
+                                page_content=page.numarkdown_text or "",
+                                metadata={
+                                    "document_id": str(page.document_id),
+                                    "page_number": page.page_number,
+                                    "image_path": page.image_path,
+                                    "source": "blueprint",
+                                    "colqwen2_score": 999.0,
+                                    "pinned": True,
+                                },
+                            )
+                        ]
+
+                # ── ColQwen2 MaxSim vector search ─────────────────────────────
+                query_vecs = colqwen2_embedder.embed_query(query)
+                qdrant = get_client()
+
+                search_filter = None
+                if self.document_ids:
+                    search_filter = Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchAny(any=self.document_ids),
+                            )
+                        ]
+                    )
+
+                results = qdrant.query_points(
+                    collection_name="blueprint_visual",
+                    query=query_vecs,
+                    using="colqwen2",
+                    query_filter=search_filter,
+                    limit=self.top_k,
+                    with_payload=True,
+                    with_vectors=False,
+                ).points
+
+                docs: List[LCDocument] = []
+                for hit in results:
+                    page = (
+                        db.query(BlueprintPage)
+                        .filter(BlueprintPage.qdrant_point_id == str(hit.id))
+                        .first()
+                    )
+                    text = page.numarkdown_text if page and page.numarkdown_text else ""
                     docs.append(
                         LCDocument(
                             page_content=text,
@@ -59,13 +105,14 @@ class BlueprintRetriever(BaseRetriever):
                                 "page_number": hit.payload.get("page_number"),
                                 "image_path": hit.payload.get("image_path"),
                                 "source": "blueprint",
+                                "colqwen2_score": float(hit.score),
                             },
                         )
                     )
+                return docs
+
             finally:
                 db.close()
-
-            return docs
 
         except Exception:
             return []
@@ -73,7 +120,7 @@ class BlueprintRetriever(BaseRetriever):
 
 class TextRetriever(BaseRetriever):
     document_ids: list = []
-    top_k: int = 50
+    top_k: int = 100
 
     class Config:
         arbitrary_types_allowed = True
@@ -99,6 +146,7 @@ class TextRetriever(BaseRetriever):
                     ]
                 )
 
+            # ── OPT-8: proper RRF fusion query ────────────────────────────────
             results = qdrant.query_points(
                 collection_name="text_hybrid",
                 prefetch=[
@@ -109,17 +157,20 @@ class TextRetriever(BaseRetriever):
                         filter=search_filter,
                     ),
                     Prefetch(
-                        query=SparseVector(indices=sparse_indices, values=sparse_values),
+                        query=SparseVector(
+                            indices=sparse_indices, values=sparse_values
+                        ),
                         using="sparse",
                         limit=self.top_k,
                         filter=search_filter,
                     ),
                 ],
-                query=FusionQuery(fusion="rrf"),
+                query=FusionQuery(fusion=Fusion.RRF),
                 limit=self.top_k,
+                with_payload=True,
             ).points
 
-            docs = []
+            docs: List[LCDocument] = []
             for hit in results:
                 docs.append(
                     LCDocument(
@@ -127,11 +178,11 @@ class TextRetriever(BaseRetriever):
                         metadata={
                             "document_id": hit.payload.get("document_id"),
                             "chunk_index": hit.payload.get("chunk_index"),
+                            "section_header": hit.payload.get("section_header", ""),
                             "source": "spec",
                         },
                     )
                 )
-
             return docs
 
         except Exception:

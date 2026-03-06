@@ -8,10 +8,10 @@ class ColQwen2Embedder:
     def __init__(self):
         from colpali_engine.models import ColQwen2, ColQwen2Processor  # type: ignore
 
-        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self.device = "cpu"  # MPS fails with bfloat16 matmul shapes in ColQwen2
         self.model = ColQwen2.from_pretrained(
             "vidore/colqwen2-v1.0",
-            torch_dtype=torch.bfloat16,
+            torch_dtype=torch.float32,
         ).to(self.device)
         self.model.eval()
         self.processor = ColQwen2Processor.from_pretrained("vidore/colqwen2-v1.0")
@@ -22,6 +22,25 @@ class ColQwen2Embedder:
         with torch.no_grad():
             embeddings = self.model(**batch)
         return embeddings[0].cpu().float().tolist()
+
+    def embed_pages_batch(
+        self, image_paths: list[str], batch_size: int = 4
+    ) -> list[list[list[float]]]:
+        """Embed multiple page images in batched forward passes.
+
+        Returns a list of multi-vector embeddings, one per image_path.
+        batch_size=4 works well on MPS; use 2 on pure CPU.
+        """
+        all_results: list[list[list[float]]] = []
+        for start in range(0, len(image_paths), batch_size):
+            chunk_paths = image_paths[start : start + batch_size]
+            images = [Image.open(p).convert("RGB") for p in chunk_paths]
+            batch = self.processor.process_images(images).to(self.device)
+            with torch.no_grad():
+                embeddings = self.model(**batch)
+            for emb in embeddings:
+                all_results.append(emb.cpu().float().tolist())
+        return all_results
 
     def embed_query(self, query_text: str) -> list[list[float]]:
         batch = self.processor.process_queries([query_text]).to(self.device)
@@ -57,6 +76,9 @@ def get_embedder() -> ColQwen2Embedder:
 class _LazyEmbedder:
     def embed_page_image(self, image_path):
         return get_embedder().embed_page_image(image_path)
+
+    def embed_pages_batch(self, image_paths, batch_size=4):
+        return get_embedder().embed_pages_batch(image_paths, batch_size)
 
     def embed_query(self, query_text):
         return get_embedder().embed_query(query_text)
